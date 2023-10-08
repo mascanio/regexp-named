@@ -5,7 +5,7 @@
 ## Installation
 
 ```bash
-go get github.com/mascanio/regex-named.go
+go get github.com/mascanio/regex-named
 ```
 
 ## Usage
