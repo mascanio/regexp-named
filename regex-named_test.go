@@ -188,9 +188,57 @@ func TestFindAllStringIndexnamed(t *testing.T) {
 	}
 }
 
-func TestSubexpNames(t *testing.T) {
-	re := MustCompile(`(?P<name>\w+) (?P<age>\d+)`)
-	if sliceEq(re.SubexpNames(), []string{"name", "age"}) {
-		t.Error("Expected SubexpNames to be {name, age}")
+func TestNoCapture(t *testing.T) {
+	re := MustCompile(`(?:\w+) (\d+)`)
+	if m0, m := re.FindStringNamed("foo 42"); m == nil {
+		t.Error("Expected match")
+	} else {
+		if m0 != "foo 42" {
+			t.Error("Expected match to be foo 42")
+		}
+		if len(m) != 0 {
+			t.Error("Expected no named match")
+		}
+	}
+}
+
+func TestNested(t *testing.T) {
+	re := MustCompile(`(?P<a>(?:1(?:2)?)*)(?P<b>3)`)
+	if m0, m := re.FindStringNamed("1211121123"); m == nil {
+		t.Error("Expected match")
+	} else {
+		if m0 != "1211121123" {
+			t.Error("Expected match to be  1211121123")
+		}
+		if m["a"] != "121112112" {
+			t.Error("Expected a to be 121112112")
+		}
+		if m["b"] != "3" {
+			t.Error("Expected b to be 3")
+		}
+		if _, ok := m["2"]; ok {
+			t.Error("Expected no 2")
+		}
+	}
+}
+
+func TestDuplicatedName(t *testing.T) {
+	_, err := Compile(`(?P<name>\w+) (?P<name>\d+)`)
+	if err == nil {
+		t.Error("Expected error")
+	}
+}
+
+func TestMalformed(t *testing.T) {
+	_, err := Compile(`(?P<name>\w+) (?P<age>\d+`)
+	if err == nil {
+		t.Error("Expected error")
+	}
+}
+
+func TestMalformedTrailingBackslash(t *testing.T) {
+	_, err := Compile(`(?P<name>\w+)\`)
+	if err == nil {
+		t.Error("Expected error")
 	}
 }
