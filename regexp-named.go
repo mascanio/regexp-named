@@ -84,7 +84,7 @@ func parseBytes(input []byte) ([]string, error) {
 		return nil, nil
 	}
 	nextrun, runlen := utf8.DecodeRune(input)
-	// Advance 	// Advance input to next runee
+	// Advance input to next runee
 	input = input[runlen:]
 	switch nextrun {
 	case '\\':
