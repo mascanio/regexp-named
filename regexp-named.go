@@ -194,32 +194,40 @@ func quote(s string) string {
 	return strconv.Quote(s)
 }
 
-func composeMap[T any](match []T, pos int) T {
+func getResult[T any](match []T, pos int) T {
 	return match[pos]
 }
 
-func composeIndex[T any](match []T, pos int) []T {
+func getResultIndex[T any](match []T, pos int) []T {
+	// match[pos*2], match[pos*2+1]
 	return match[pos*2 : pos*2+2]
 }
 
-func mapRe[T, S any](re *RegexpNamed, match []T, f func([]T, int) S) (S, map[string]S) {
-	if match == nil {
+// Helper function to map the result of the regexp.findSubmatch_ functions
+// to a map of the names of the named groups of the regexp.
+// It takes a list of submatches, and returns the result of apply resultFunc
+// to all the submatches.
+func mapRe[T, S any](re *RegexpNamed, submatches []T, resultFunc func([]T, int) S) (S, map[string]S) {
+	if submatches == nil {
 		return *new(S), nil
 	}
 	rv := make(map[string]S)
 	for k, v := range re.namedMap {
-		rv[k] = f(match, v)
+		rv[k] = resultFunc(submatches, v)
 	}
-	return f(match, 0), rv
+	return resultFunc(submatches, 0), rv
 }
 
-func mapReAll[T, S any](re *RegexpNamed, match [][]T, f func([]T, int) S) ([]S, []map[string]S) {
+// Helper function to map the result of the regexp.findSubmatch_All functions
+// to a map of the names of the named groups of the regexp.
+// Calls mapRe for each match.
+func mapReAll[T, S any](re *RegexpNamed, matches [][]T, composeFunc func([]T, int) S) ([]S, []map[string]S) {
 	rv := make([]map[string]S, 0)
 	rv0 := make([]S, 0)
-	for _, m := range match {
-		base, mm := mapRe(re, m, f)
+	for _, submatches := range matches {
+		base, namedSubmatches := mapRe(re, submatches, composeFunc)
 		rv0 = append(rv0, base)
-		rv = append(rv, mm)
+		rv = append(rv, namedSubmatches)
 	}
 	return rv0, rv
 }
@@ -229,7 +237,7 @@ func mapReAll[T, S any](re *RegexpNamed, match [][]T, f func([]T, int) S) ([]S, 
 // If there are no matches, nil is returned.
 // See (*Regexp).FindSubmatch for a description of the return value.
 func (re *RegexpNamed) FindNamed(s []byte) ([]byte, map[string][]byte) {
-	return mapRe(re, re.FindSubmatch(s), composeMap)
+	return mapRe(re, re.FindSubmatch(s), getResult)
 }
 
 // FindIndexNamed returns a map of named index pairs identifying the
@@ -238,7 +246,7 @@ func (re *RegexpNamed) FindNamed(s []byte) ([]byte, map[string][]byte) {
 // If there are no matches, nil is returned.
 // See (*Regexp).FindSubmatchIndex for a description of the return value.
 func (re *RegexpNamed) FindIndexNamed(s []byte) ([]int, map[string][]int) {
-	return mapRe(re, re.FindSubmatchIndex(s), composeIndex)
+	return mapRe(re, re.FindSubmatchIndex(s), getResultIndex)
 }
 
 // FindStringNamed returns a map of named submatches matched by re in s.
@@ -246,7 +254,7 @@ func (re *RegexpNamed) FindIndexNamed(s []byte) ([]int, map[string][]int) {
 // If there are no matches, nil is returned.
 // See (*Regexp).FindStringSubmatch for a description of the return value.
 func (re *RegexpNamed) FindStringNamed(s string) (string, map[string]string) {
-	return mapRe(re, re.FindStringSubmatch(s), composeMap)
+	return mapRe(re, re.FindStringSubmatch(s), getResult)
 }
 
 // FindStringIndexNamed returns a map of named index pairs identifying the
@@ -255,7 +263,7 @@ func (re *RegexpNamed) FindStringNamed(s string) (string, map[string]string) {
 // If there are no matches, nil is returned.
 // See (*Regexp).FindStringSubmatchIndex for a description of the return value.
 func (re *RegexpNamed) FindStringIndexNamed(s string) ([]int, map[string][]int) {
-	return mapRe(re, re.FindStringSubmatchIndex(s), composeIndex)
+	return mapRe(re, re.FindStringSubmatchIndex(s), getResultIndex)
 }
 
 // FindAllNamed is the 'All' version of FindNamed; it returns a slice of all
@@ -264,7 +272,7 @@ func (re *RegexpNamed) FindStringIndexNamed(s string) ([]int, map[string][]int) 
 // A return value of nil indicates no match.
 // See (*Regexp).FindAllSubmatch for a description of the return value.
 func (re *RegexpNamed) FindAllNamed(b []byte, n int) ([][]byte, []map[string][]byte) {
-	return mapReAll(re, re.FindAllSubmatch(b, n), composeMap)
+	return mapReAll(re, re.FindAllSubmatch(b, n), getResult)
 }
 
 // FindAllIndexNamed is the 'All' version of FindIndexNamed; it returns a slice
@@ -274,7 +282,7 @@ func (re *RegexpNamed) FindAllNamed(b []byte, n int) ([][]byte, []map[string][]b
 // A return value of nil indicates no match.
 // See (*Regexp).FindAllSubmatchIndex for a description of the return value.
 func (re *RegexpNamed) FindAllIndexNamed(b []byte, n int) ([][]int, []map[string][]int) {
-	return mapReAll(re, re.FindAllSubmatchIndex(b, n), composeIndex)
+	return mapReAll(re, re.FindAllSubmatchIndex(b, n), getResultIndex)
 }
 
 // FindAllStringNamed is the 'All' version of FindStringNamed; it returns a
@@ -283,7 +291,7 @@ func (re *RegexpNamed) FindAllIndexNamed(b []byte, n int) ([][]int, []map[string
 // A return value of nil indicates no match.
 // See (*Regexp).FindAllStringSubmatch for a description of the return value.
 func (re *RegexpNamed) FindAllStringNamed(s string, n int) ([]string, []map[string]string) {
-	return mapReAll(re, re.FindAllStringSubmatch(s, n), composeMap)
+	return mapReAll(re, re.FindAllStringSubmatch(s, n), getResult)
 }
 
 // FindAllStringIndexNamed is the 'All' version of FindStringIndexNamed; it
@@ -293,5 +301,5 @@ func (re *RegexpNamed) FindAllStringNamed(s string, n int) ([]string, []map[stri
 // A return value of nil indicates no match.
 // See (*Regexp).FindAllStringSubmatchIndex for a description of the return value.
 func (re *RegexpNamed) FindAllStringIndexNamed(s string, n int) ([][]int, []map[string][]int) {
-	return mapReAll(re, re.FindAllStringSubmatchIndex(s, n), composeIndex)
+	return mapReAll(re, re.FindAllStringSubmatchIndex(s, n), getResultIndex)
 }
