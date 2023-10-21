@@ -2,14 +2,14 @@
 //
 // The package extends the regexp package with the following methods:
 //
-// 	FindNamed
-// 	FindIndexNamed
-// 	FindStringNamed
-// 	FindStringIndexNamed
-// 	FindAllNamed
-// 	FindAllIndexNamed
-// 	FindAllStringNamed
-// 	FindAllStringIndexNamed
+//	FindNamed
+//	FindIndexNamed
+//	FindStringNamed
+//	FindStringIndexNamed
+//	FindAllNamed
+//	FindAllIndexNamed
+//	FindAllStringNamed
+//	FindAllStringIndexNamed
 //
 // These methods work like the corresponding methods in the regexp, replacing
 // the slices returned by the corresponding methods for maps indexed by the
@@ -20,18 +20,17 @@
 //
 // For example:
 //
-// 	re := MustCompile(`(?P<name>\w+) (?P<age>\d+)`)
-//  m0, m := re.FindStringNamed("foo 42")
+//		re := MustCompile(`(?P<name>\w+) (?P<age>\d+)`)
+//	 m0, m := re.FindStringNamed("foo 42")
 //
 // m0 will be "foo 42" and m will be a map[string]string with the following
 // values:
 //
-// 	m["name"] == "foo"
-// 	m["age"] == "42"
+//	m["name"] == "foo"
+//	m["age"] == "42"
 //
 // If a group is not matched, the corresponding value in the map will be an
 // empty string.
-
 package regexp_named
 
 import (
