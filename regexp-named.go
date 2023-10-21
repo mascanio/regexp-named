@@ -1,4 +1,4 @@
-// Package regex named provides named submatches for Go's regexp package.
+// Package regexp named provides named submatches for Go's regexp package.
 //
 // The package extends the regexp package with the following methods:
 //
@@ -15,7 +15,7 @@
 // the slices returned by the corresponding methods for maps indexed by the
 // names of the groups.
 //
-// RegexNamed are created with the Compile and MustCompile functions, which
+// RegexpNamed are created with the Compile and MustCompile functions, which
 // work like the corresponding functions in the regexp package.
 //
 // For example:
@@ -32,79 +32,112 @@
 // If a group is not matched, the corresponding value in the map will be an
 // empty string.
 
-package regex_named
+package regexp_named
 
 import (
 	"errors"
 	"regexp"
+	"strconv"
 	"unicode"
 	"unicode/utf8"
 )
 
-type RegexNamed struct {
+type RegexpNamed struct {
 	namedMap map[string]int
 	*regexp.Regexp
 }
 
-const errorString = string(unicode.ReplacementChar)
+const UnnamedCapture = string(unicode.ReplacementChar)
 
-func parseBytes(in []byte, until rune) ([]string, error) {
-	reNamedMatch := regexp.MustCompile(`^\?P\<(.*?)\>`)
-	reNoCaptureMatch := regexp.MustCompile(`^\?:`)
-	if len(in) == 0 {
+var reNamedMatch = regexp.MustCompile(`^\?P\<(.*?)\>`)
+var reNoCaptureMatch = regexp.MustCompile(`^\?:`)
+
+// parseBytes parses a regular expression, returning a slice
+// of strings containing the names of the groups in the regular
+// expression:
+//   - If the i'th group is named, its name is returned in the
+//     i position of the slice.
+//   - If the i'th group is not named, the i position of the
+//     slice is set to UnnamedCapture.
+//   - Non capturing groups are ignored.
+//
+// If the length of the input is 0, nil is returned.
+// If the regular expression is malformed (invalid rune found or
+// the regexp ends in a backslash), an error is returned.
+//
+// Examples:
+//
+//	parseBytes([]byte(`(?P<name>\w+) (?P<age>\d+)`), 0)
+//
+// will return
+//
+//	[]string{"name", "age"}, nil
+//
+// while
+//
+//	parseBytes([]byte(`(?P<name>\w+) (?:\w+) (\d+)`), 0)
+//
+//	will return
+//
+//	[]string{name, UnnamedCapture}, nil
+func parseBytes(input []byte) ([]string, error) {
+	if len(input) == 0 {
 		return nil, nil
 	}
-	nextrun, runlen := utf8.DecodeRune(in)
-	in = in[runlen:]
-	if nextrun == until {
-		return parseBytes(in, 0)
-	}
-	var prependReturn []string
+	nextrun, runlen := utf8.DecodeRune(input)
+	// Advance 	// Advance input to next runee
+	input = input[runlen:]
 	switch nextrun {
 	case '\\':
-		if len(in) == 0 {
-			return nil, errors.New("malformed - trailing \\")
+		// Scape character, skip next rune
+		if len(input) == 0 {
+			return nil, errors.New("error parsing named regexp: trailing backslash at end of expression")
 		}
-		// Skip scaped rune
-		if nextrun, runlen := utf8.DecodeRune(in); nextrun != utf8.RuneError {
-			in = in[runlen:]
+		if nextrun, runlen := utf8.DecodeRune(input); nextrun != utf8.RuneError {
+			// effectively skip next rune
+			input = input[runlen:]
 		} else {
-			return nil, errors.New("incorrect rune")
+			return nil, errors.New("error parsing named regexp: incorrect rune after backslash")
 		}
-		return parseBytes(in, 0)
+		return parseBytes(input)
 	case '(':
-		untilRecursive := ')'
-		if m := reNamedMatch.FindSubmatchIndex(in); m != nil {
-			// Named pattern ?P<name>, return name
-			prependReturn = []string{string(in[m[2]:m[3]])}
-			// skip ?p<name>
-			in = in[m[3]+1:]
-		} else if m := reNoCaptureMatch.FindSubmatchIndex(in); m != nil {
-			// no capture, skip ?: part
-			in = in[m[1]+1:]
+		var groupName []string
+		if m := reNamedMatch.FindSubmatchIndex(input); m != nil {
+			// Named pattern ?P<name>
+			// return name of the group found
+			groupName = []string{string(input[m[2]:m[3]])}
+			// skip "?p<name>", "(" already skipped
+			input = input[m[3]+1:]
+		} else if m := reNoCaptureMatch.FindSubmatchIndex(input); m != nil {
+			// no capturing group
+			// nothing to return
+			// skip "?:", "(" already skipped
+			input = input[m[1]+1:]
 		} else {
-			prependReturn = []string{errorString}
+			// capture with no name
+			// return unnamedCapture
+			groupName = []string{UnnamedCapture}
+			// "(" already skipped
 		}
-		if rec, err := parseBytes(in, untilRecursive); err == nil {
-			return append(prependReturn, rec...), nil
+		// Parse the rest
+		if recursiveResult, err := parseBytes(input); err == nil {
+			// Prepend the named match found to the rest of the named groups names
+			// that are parsed recursively
+			return append(groupName, recursiveResult...), nil
 		} else {
 			return nil, err
 		}
 	default:
-		return parseBytes(in, 0)
+		return parseBytes(input)
 	}
-}
-
-func parse(in string) ([]string, error) {
-	return parseBytes([]byte(in), 0)
 }
 
 func buildMap(namedMatches []string) (map[string]int, error) {
 	r := make(map[string]int)
 	for i, name := range namedMatches {
-		if name != errorString {
+		if name != UnnamedCapture {
 			if _, ok := r[name]; ok {
-				return nil, errors.New("duplicate name")
+				return nil, errors.New("error parsing named regexp: duplicate named group")
 			}
 			r[name] = i + 1
 		}
@@ -112,28 +145,54 @@ func buildMap(namedMatches []string) (map[string]int, error) {
 	return r, nil
 }
 
-func Compile(re string) (RegexNamed, error) {
+// Compile is the 'Compile' version of regexp.Compile; it returns a RegexpNamed
+// object that can be used to match against text.
+//
+// The regular expression syntax is the same as that of the regexp package,
+// but allows matching against named submatches, using the methods
+// FindNamed, FindIndexNamed, FindStringNamed, FindStringIndexNamed,
+// FindAllNamed, FindAllIndexNamed, FindAllStringNamed and
+// FindAllStringIndexNamed; see the documentation of those methods in
+// this package for details.
+//
+// The methods of regexp package can be used with the RegexpNamed type.
+//
+// If the expression is malformed, or if a named group is duplicated, an
+// error is returned.
+//
+// See regexp.Compile for more information.
+func Compile(re string) (RegexpNamed, error) {
 	compiledRe, err := regexp.Compile(re)
 	if err != nil {
-		return RegexNamed{nil, nil}, err
+		return RegexpNamed{nil, nil}, err
 	}
-	if parsed, err := parse(re); err != nil {
-		return RegexNamed{nil, nil}, err
+	if parsed, err := parseBytes([]byte(re)); err != nil {
+		return RegexpNamed{nil, nil}, err
 	} else {
 		if map_, err := buildMap(parsed); err != nil {
-			return RegexNamed{nil, nil}, err
+			return RegexpNamed{nil, nil}, err
 		} else {
-			return RegexNamed{map_, compiledRe}, nil
+			return RegexpNamed{map_, compiledRe}, nil
 		}
 	}
 }
 
-func MustCompile(re string) RegexNamed {
+// MustCompile is like Compile but panics if the expression cannot be parsed.
+// It simplifies safe initialization of global variables holding compiled regular
+// expressions.
+func MustCompile(re string) RegexpNamed {
 	r, err := Compile(re)
 	if err != nil {
-		panic(err)
+		panic(`regexp_named: Compile(` + quote(re) + `): ` + err.Error())
 	}
 	return r
+}
+
+func quote(s string) string {
+	if strconv.CanBackquote(s) {
+		return "`" + s + "`"
+	}
+	return strconv.Quote(s)
 }
 
 func composeMap[T any](match []T, pos int) T {
@@ -144,7 +203,7 @@ func composeIndex[T any](match []T, pos int) []T {
 	return match[pos*2 : pos*2+2]
 }
 
-func mapRe[T, S any](re *RegexNamed, match []T, f func([]T, int) S) (S, map[string]S) {
+func mapRe[T, S any](re *RegexpNamed, match []T, f func([]T, int) S) (S, map[string]S) {
 	if match == nil {
 		return *new(S), nil
 	}
@@ -155,7 +214,7 @@ func mapRe[T, S any](re *RegexNamed, match []T, f func([]T, int) S) (S, map[stri
 	return f(match, 0), rv
 }
 
-func mapReAll[T, S any](re *RegexNamed, match [][]T, f func([]T, int) S) ([]S, []map[string]S) {
+func mapReAll[T, S any](re *RegexpNamed, match [][]T, f func([]T, int) S) ([]S, []map[string]S) {
 	rv := make([]map[string]S, 0)
 	rv0 := make([]S, 0)
 	for _, m := range match {
@@ -170,7 +229,7 @@ func mapReAll[T, S any](re *RegexNamed, match [][]T, f func([]T, int) S) ([]S, [
 // The match itself is returned as the first element of the result.
 // If there are no matches, nil is returned.
 // See (*Regexp).FindSubmatch for a description of the return value.
-func (re *RegexNamed) FindNamed(s []byte) ([]byte, map[string][]byte) {
+func (re *RegexpNamed) FindNamed(s []byte) ([]byte, map[string][]byte) {
 	return mapRe(re, re.FindSubmatch(s), composeMap)
 }
 
@@ -179,7 +238,7 @@ func (re *RegexNamed) FindNamed(s []byte) ([]byte, map[string][]byte) {
 // The match itself is returned as the first element of the result.
 // If there are no matches, nil is returned.
 // See (*Regexp).FindSubmatchIndex for a description of the return value.
-func (re *RegexNamed) FindIndexNamed(s []byte) ([]int, map[string][]int) {
+func (re *RegexpNamed) FindIndexNamed(s []byte) ([]int, map[string][]int) {
 	return mapRe(re, re.FindSubmatchIndex(s), composeIndex)
 }
 
@@ -187,7 +246,7 @@ func (re *RegexNamed) FindIndexNamed(s []byte) ([]int, map[string][]int) {
 // The match itself is returned as the first element of the result.
 // If there are no matches, nil is returned.
 // See (*Regexp).FindStringSubmatch for a description of the return value.
-func (re *RegexNamed) FindStringNamed(s string) (string, map[string]string) {
+func (re *RegexpNamed) FindStringNamed(s string) (string, map[string]string) {
 	return mapRe(re, re.FindStringSubmatch(s), composeMap)
 }
 
@@ -196,7 +255,7 @@ func (re *RegexNamed) FindStringNamed(s string) (string, map[string]string) {
 // The match itself is returned as the first element of the result.
 // If there are no matches, nil is returned.
 // See (*Regexp).FindStringSubmatchIndex for a description of the return value.
-func (re *RegexNamed) FindStringIndexNamed(s string) ([]int, map[string][]int) {
+func (re *RegexpNamed) FindStringIndexNamed(s string) ([]int, map[string][]int) {
 	return mapRe(re, re.FindStringSubmatchIndex(s), composeIndex)
 }
 
@@ -205,7 +264,7 @@ func (re *RegexNamed) FindStringIndexNamed(s string) ([]int, map[string][]int) {
 // The match itself is returned as the first element of the result.
 // A return value of nil indicates no match.
 // See (*Regexp).FindAllSubmatch for a description of the return value.
-func (re *RegexNamed) FindAllNamed(b []byte, n int) ([][]byte, []map[string][]byte) {
+func (re *RegexpNamed) FindAllNamed(b []byte, n int) ([][]byte, []map[string][]byte) {
 	return mapReAll(re, re.FindAllSubmatch(b, n), composeMap)
 }
 
@@ -215,7 +274,7 @@ func (re *RegexNamed) FindAllNamed(b []byte, n int) ([][]byte, []map[string][]by
 // The match itself is returned as the first element of the result.
 // A return value of nil indicates no match.
 // See (*Regexp).FindAllSubmatchIndex for a description of the return value.
-func (re *RegexNamed) FindAllIndexNamed(b []byte, n int) ([][]int, []map[string][]int) {
+func (re *RegexpNamed) FindAllIndexNamed(b []byte, n int) ([][]int, []map[string][]int) {
 	return mapReAll(re, re.FindAllSubmatchIndex(b, n), composeIndex)
 }
 
@@ -224,7 +283,7 @@ func (re *RegexNamed) FindAllIndexNamed(b []byte, n int) ([][]int, []map[string]
 // The match itself is returned as the first element of the result.
 // A return value of nil indicates no match.
 // See (*Regexp).FindAllStringSubmatch for a description of the return value.
-func (re *RegexNamed) FindAllStringNamed(s string, n int) ([]string, []map[string]string) {
+func (re *RegexpNamed) FindAllStringNamed(s string, n int) ([]string, []map[string]string) {
 	return mapReAll(re, re.FindAllStringSubmatch(s, n), composeMap)
 }
 
@@ -234,6 +293,6 @@ func (re *RegexNamed) FindAllStringNamed(s string, n int) ([]string, []map[strin
 // The match itself is returned as the first element of the result.
 // A return value of nil indicates no match.
 // See (*Regexp).FindAllStringSubmatchIndex for a description of the return value.
-func (re *RegexNamed) FindAllStringIndexNamed(s string, n int) ([][]int, []map[string][]int) {
+func (re *RegexpNamed) FindAllStringIndexNamed(s string, n int) ([][]int, []map[string][]int) {
 	return mapReAll(re, re.FindAllStringSubmatchIndex(s, n), composeIndex)
 }

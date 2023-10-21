@@ -1,4 +1,4 @@
-package regex_named
+package regexp_named
 
 import (
 	"testing"
